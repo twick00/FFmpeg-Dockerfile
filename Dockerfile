@@ -29,7 +29,8 @@ RUN mkdir -p ~/ffmpeg_sources \
     cd ~/ffmpeg_sources && \
     wget -O ffmpeg-snapshot.tar.bz2 https://ffmpeg.org/releases/ffmpeg-snapshot.tar.bz2 && \
     tar xjvf ffmpeg-snapshot.tar.bz2
-    #Compile from sources and install NASM
+
+#Compile from sources and install NASM
 RUN cd ~/ffmpeg_sources && \
     wget https://www.nasm.us/pub/nasm/releasebuilds/2.13.03/nasm-2.13.03.tar.bz2 && \
     tar xjvf nasm-2.13.03.tar.bz2 && \
@@ -38,14 +39,16 @@ RUN cd ~/ffmpeg_sources && \
     PATH="$HOME/bin:$PATH" ./configure --prefix="$HOME/ffmpeg_build" --bindir="$HOME/bin" && \
     make -j4 && \
     make -j4 install
-    #Install driver for H.264
+
+#Install driver for H.264
 RUN cd ~/ffmpeg_sources && \
     git -C x264 pull 2> /dev/null || git clone --depth 1 https://git.videolan.org/git/x264 && \
     cd x264 && \
     PATH="$HOME/bin:$PATH" PKG_CONFIG_PATH="$HOME/ffmpeg_build/lib/pkgconfig" ./configure --prefix="$HOME/ffmpeg_build" --bindir="$HOME/bin" --enable-static --enable-pic && \
     PATH="$HOME/bin:$PATH" make -j4 && \
     make -j4 install
-    #Install drivers for H.265
+
+#Install drivers for H.265
 RUN apt-get -y install mercurial libnuma-dev && \
     cd ~/ffmpeg_sources && \
     if cd x265 2> /dev/null; then hg pull && hg update; else hg clone https://bitbucket.org/multicoreware/x265; fi && \
@@ -53,11 +56,21 @@ RUN apt-get -y install mercurial libnuma-dev && \
     PATH="$HOME/bin:$PATH" cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX="$HOME/ffmpeg_build" -DENABLE_SHARED=off ../../source && \
     PATH="$HOME/bin:$PATH" make -j4 && \
     make -j4 install
-    #Install drivers for VPX
+
+#Install drivers for VPX
 RUN cd ~/ffmpeg_sources && \
     git -C libvpx pull 2> /dev/null || git clone --depth 1 https://chromium.googlesource.com/webm/libvpx.git && \
     cd libvpx && \
     PATH="$HOME/bin:$PATH" ./configure --prefix="$HOME/ffmpeg_build" --disable-examples --disable-unit-tests --enable-vp9-highbitdepth --as=nasm && \
+    PATH="$HOME/bin:$PATH" make -j4 && \
+    make -j4 install
+
+#Install drivers for AOM
+RUN cd ~/ffmpeg_sources && \
+    git -C aom pull 2> /dev/null || git clone --depth 1 https://aomedia.googlesource.com/aom && \
+    mkdir aom_build && \
+    cd aom_build && \
+    PATH="$HOME/bin:$PATH" cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX="$HOME/ffmpeg_build" -DENABLE_SHARED=off -DENABLE_NASM=on ../aom && \
     PATH="$HOME/bin:$PATH" make -j4 && \
     make -j4 install
 
@@ -71,6 +84,9 @@ RUN cd ffmpeg && \
       --extra-libs="-lpthread -lm" \
       --bindir="$HOME/bin" \
       --enable-gpl \
+#      --enable-cuda \
+#      --enable-cuvid \
+#      --enable-nvenc \
       --enable-libvpx \
       --enable-libx264 \
       --enable-libx265 \
