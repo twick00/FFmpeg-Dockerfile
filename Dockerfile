@@ -22,7 +22,10 @@ RUN apt-get update -qq && apt-get -y install \
     pkg-config \
     texinfo \
     wget \
-    zlib1g-dev
+    zlib1g-dev \
+#   Install drivers for openCL
+    ocl-icd-opencl-dev \
+    opencl-headers
 
 RUN mkdir -p ~/ffmpeg_sources \
     mkdir ~/bin \
@@ -74,6 +77,13 @@ RUN cd ~/ffmpeg_sources && \
     PATH="$HOME/bin:$PATH" make -j4 && \
     make -j4 install
 
+#Install nv-codec-headers for cuda, cuvid and nvenc
+RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git && \
+    cd nv-codec-headers && \
+    make && make install
+
+
+
 #Install libx264, libx265, libnuma, and libvpx
 RUN cd ffmpeg && \
     PATH="$HOME/bin:$PATH" PKG_CONFIG_PATH="$HOME/ffmpeg_build/lib/pkgconfig" ./configure \
@@ -84,12 +94,13 @@ RUN cd ffmpeg && \
       --extra-libs="-lpthread -lm" \
       --bindir="$HOME/bin" \
       --enable-gpl \
-#      --enable-cuda \
-#      --enable-cuvid \
-#      --enable-nvenc \
+      --enable-cuda \
+      --enable-cuvid \
+      --enable-nvenc \
       --enable-libvpx \
       --enable-libx264 \
       --enable-libx265 \
+      --enable-opencl \
       --enable-nonfree && \
     PATH="$HOME/bin:$PATH" make -j4 && \
     make -j4 install && \
