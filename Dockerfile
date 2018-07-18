@@ -50,9 +50,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV LIBRARY_PATH /usr/local/cuda/lib64/stubs
 
-
-MAINTAINER Tyler Wickline <twick00@gmail.com>
-
 # Install dependent packages
 RUN apt-get -y update && apt-get install -y wget nano git-core build-essential pkg-config \
     autoconf automake cmake libass-dev libfreetype6-dev libtool libvorbis-dev pkg-config texinfo \
