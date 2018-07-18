@@ -1,108 +1,147 @@
-FROM debian:latest
-MAINTAINER Tyler Wickline
+FROM ubuntu:16.04
+MAINTAINER "Tyler Wickline <tyler@oakion.com>"
 
-#Update apt-get and install required packages to build Ffmpeg with H.264, H.265 and VPX
-RUN apt-get update -qq && apt-get -y install \
-    apt-utils \
-    autoconf \
-    automake \
-    build-essential \
-    cmake \
-    git-core \
-    libass-dev \
-    libfreetype6-dev \
-    libsdl2-dev \
-    libtool \
-    libva-dev \
-    libvdpau-dev \
-    libvorbis-dev \
-    libxcb1-dev \
-    libxcb-shm0-dev \
-    libxcb-xfixes0-dev \
-    pkg-config \
-    texinfo \
-    wget \
-    zlib1g-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates apt-transport-https gnupg-curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    NVIDIA_GPGKEY_SUM=d1be581509378368edeec8c1eb2958702feedf3bc3d17011adbf24efacce4ab5 && \
+    NVIDIA_GPGKEY_FPR=ae09fe4bbd223a84b2ccfce3f60f4b3d7fa2af80 && \
+    apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1604/x86_64/7fa2af80.pub && \
+    apt-key adv --export --no-emit-version -a $NVIDIA_GPGKEY_FPR | tail -n +5 > cudasign.pub && \
+    echo "$NVIDIA_GPGKEY_SUM  cudasign.pub" | sha256sum -c --strict - && rm cudasign.pub && \
+    echo "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1604/x86_64 /" > /etc/apt/sources.list.d/cuda.list && \
+    echo "deb https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu1604/x86_64 /" > /etc/apt/sources.list.d/nvidia-ml.list
+
+ENV CUDA_VERSION 9.1.85
+
+ENV CUDA_PKG_VERSION 9-1=$CUDA_VERSION-1
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cuda-cudart-$CUDA_PKG_VERSION && \
+    ln -s cuda-9.1 /usr/local/cuda && \
+    rm -rf /var/lib/apt/lists/*
+
+# nvidia-docker 1.0
+LABEL com.nvidia.volumes.needed="nvidia_driver"
+LABEL com.nvidia.cuda.version="${CUDA_VERSION}"
+
+RUN echo "/usr/local/nvidia/lib" >> /etc/ld.so.conf.d/nvidia.conf && \
+    echo "/usr/local/nvidia/lib64" >> /etc/ld.so.conf.d/nvidia.conf
+
+ENV PATH /usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}
+ENV LD_LIBRARY_PATH /usr/local/nvidia/lib:/usr/local/nvidia/lib64
+
+# nvidia-container-runtime
+ENV NVIDIA_VISIBLE_DEVICES all
+ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
+ENV NVIDIA_REQUIRE_CUDA "cuda>=9.1"
+ENV NCCL_VERSION 2.2.12
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cuda-libraries-$CUDA_PKG_VERSION \
+        libnccl2=$NCCL_VERSION-1+cuda9.1 && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cuda-libraries-dev-$CUDA_PKG_VERSION \
+        cuda-nvml-dev-$CUDA_PKG_VERSION \
+        cuda-minimal-build-$CUDA_PKG_VERSION \
+        cuda-command-line-tools-$CUDA_PKG_VERSION \
+        libnccl-dev=$NCCL_VERSION-1+cuda9.1 && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV LIBRARY_PATH /usr/local/cuda/lib64/stubs
+
+
+MAINTAINER Tyler Wickline <twick00@gmail.com>
+
+# Install dependent packages
+RUN apt-get -y update && apt-get install -y wget nano git-core build-essential pkg-config \
+    autoconf automake cmake libass-dev libfreetype6-dev libtool libvorbis-dev pkg-config texinfo \
+    wget zlib1g-dev \
 #   Install drivers for openCL
-    ocl-icd-opencl-dev \
-    opencl-headers
+    ocl-icd-opencl-dev opencl-headers
 
-RUN mkdir -p ~/ffmpeg_sources \
-    mkdir ~/bin \
-    cd ~/ffmpeg_sources && \
-    wget -O ffmpeg-snapshot.tar.bz2 https://ffmpeg.org/releases/ffmpeg-snapshot.tar.bz2 && \
-    tar xjvf ffmpeg-snapshot.tar.bz2
+RUN git clone https://github.com/FFmpeg/nv-codec-headers /root/nv-codec-headers && \
+  cd /root/nv-codec-headers &&\
+  make -j8 && \
+  make install -j8 && \
+  cd /root && rm -rf nv-codec-headers
 
-#Compile from sources and install NASM
-RUN cd ~/ffmpeg_sources && \
+RUN mkdir -p /root/ffmpeg_sources \
+    mkdir /root/bin
+
+#Build/Install NASM Assembly driver
+RUN cd /root/ffmpeg_sources && \
     wget https://www.nasm.us/pub/nasm/releasebuilds/2.13.03/nasm-2.13.03.tar.bz2 && \
     tar xjvf nasm-2.13.03.tar.bz2 && \
     cd nasm-2.13.03 && \
     ./autogen.sh && \
-    PATH="$HOME/bin:$PATH" ./configure --prefix="$HOME/ffmpeg_build" --bindir="$HOME/bin" && \
-    make -j4 && \
-    make -j4 install
+    PATH="/root/bin:$PATH" ./configure --prefix="/root/ffmpeg_build" --bindir="/root/bin" && \
+    make -j6 && \
+    make install
 
 #Install driver for H.264
-RUN cd ~/ffmpeg_sources && \
+RUN cd /root/ffmpeg_sources && \
     git -C x264 pull 2> /dev/null || git clone --depth 1 https://git.videolan.org/git/x264 && \
     cd x264 && \
-    PATH="$HOME/bin:$PATH" PKG_CONFIG_PATH="$HOME/ffmpeg_build/lib/pkgconfig" ./configure --prefix="$HOME/ffmpeg_build" --bindir="$HOME/bin" --enable-static --enable-pic && \
-    PATH="$HOME/bin:$PATH" make -j4 && \
-    make -j4 install
+    PATH=/root/bin:$PATH PKG_CONFIG_PATH=/root/ffmpeg_build/lib/pkgconfig ./configure --prefix=/root/ffmpeg_build --bindir=/root/bin --enable-static --enable-pic && \
+    PATH=/root/bin:$PATH make -j6 && \
+    make install
 
-#Install drivers for H.265
+##Install drivers for H.265
 RUN apt-get -y install mercurial libnuma-dev && \
-    cd ~/ffmpeg_sources && \
+    cd /root/ffmpeg_sources && \
     if cd x265 2> /dev/null; then hg pull && hg update; else hg clone https://bitbucket.org/multicoreware/x265; fi && \
     cd x265/build/linux && \
-    PATH="$HOME/bin:$PATH" cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX="$HOME/ffmpeg_build" -DENABLE_SHARED=off ../../source && \
-    PATH="$HOME/bin:$PATH" make -j4 && \
-    make -j4 install
+    PATH=/root/bin:$PATH cmake -G 'Unix Makefiles' -DCMAKE_INSTALL_PREFIX=/root/ffmpeg_build -DENABLE_SHARED=off ../../source && \
+    PATH=/root/bin:$PATH make -j6 && \
+    make install
 
-#Install drivers for VPX
+#Install drivers for VPX/
 RUN cd ~/ffmpeg_sources && \
     git -C libvpx pull 2> /dev/null || git clone --depth 1 https://chromium.googlesource.com/webm/libvpx.git && \
     cd libvpx && \
-    PATH="$HOME/bin:$PATH" ./configure --prefix="$HOME/ffmpeg_build" --disable-examples --disable-unit-tests --enable-vp9-highbitdepth --as=nasm && \
-    PATH="$HOME/bin:$PATH" make -j4 && \
-    make -j4 install
+    PATH=/root/bin:$PATH ./configure --prefix=/root/ffmpeg_build --disable-examples --disable-unit-tests --enable-vp9-highbitdepth --as=nasm && \
+    PATH=/root/bin:$PATH make -j6 && \
+    make install
 
 #Install drivers for AOM
 RUN cd ~/ffmpeg_sources && \
     git -C aom pull 2> /dev/null || git clone --depth 1 https://aomedia.googlesource.com/aom && \
     mkdir aom_build && \
     cd aom_build && \
-    PATH="$HOME/bin:$PATH" cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX="$HOME/ffmpeg_build" -DENABLE_SHARED=off -DENABLE_NASM=on ../aom && \
-    PATH="$HOME/bin:$PATH" make -j4 && \
-    make -j4 install
+    PATH=/root/bin:$PATH cmake -G 'Unix Makefiles' -DCMAKE_INSTALL_PREFIX=/root/ffmpeg_build -DENABLE_SHARED=off -DENABLE_NASM=on ../aom && \
+    PATH=/root/bin:$PATH make -j6 && \
+    make install
 
-#Install nv-codec-headers for cuda, cuvid and nvenc
-RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git && \
-    cd nv-codec-headers && \
-    make && make install
-
-
-
-#Install libx264, libx265, libnuma, and libvpx
-RUN cd ffmpeg && \
-    PATH="$HOME/bin:$PATH" PKG_CONFIG_PATH="$HOME/ffmpeg_build/lib/pkgconfig" ./configure \
-      --prefix="$HOME/ffmpeg_build" \
-      --pkg-config-flags="--static" \
-      --extra-cflags="-I$HOME/ffmpeg_build/include" \
-      --extra-ldflags="-L$HOME/ffmpeg_build/lib" \
-      --extra-libs="-lpthread -lm" \
-      --bindir="$HOME/bin" \
-      --enable-gpl \
-      --enable-cuda \
-      --enable-cuvid \
-      --enable-nvenc \
-      --enable-libvpx \
-      --enable-libx264 \
-      --enable-libx265 \
-      --enable-opencl \
-      --enable-nonfree && \
-    PATH="$HOME/bin:$PATH" make -j4 && \
-    make -j4 install && \
-    hash -r
 ENV PATH=$PATH:/root/bin
+
+RUN git clone https://github.com/FFmpeg/FFmpeg /root/ffmpeg_sources/ffmpeg && \
+    cd /root/ffmpeg_sources/ffmpeg && \
+    PKG_CONFIG_PATH="/root/ffmpeg_build/lib/pkgconfig" ./configure \
+    --prefix="/root/ffmpeg_build" \
+    --enable-nonfree --disable-shared \
+    --enable-nvenc --enable-cuda \
+    --enable-cuvid --enable-libnpp \
+    --extra-cflags="-I/usr/local/cuda/include" \
+    --extra-cflags="-I/usr/local/include" \
+    --extra-ldflags="-L/usr/local/cuda/lib64" \
+    --enable-libvpx --enable-libx264 \
+    --enable-libx265 --enable-opencl \
+    --enable-gpl \
+    --pkg-config-flags=--static \
+    --extra-cflags="-I/root/ffmpeg_build/include" \
+    --extra-cflags="-I/root/bin" \
+    --extra-ldflags="-L/root/ffmpeg_build/lib" \
+    --extra-libs="-lpthread -lm" \
+    --bindir="/root/bin" && \
+    PATH="/root/bin:$PATH" make -j8 && \
+    make install -j8 && \
+    cd /root && rm -rf ffmpeg
+
+ENV NVIDIA_DRIVER_CAPABILITIES video,compute,utility
+ENV PATH=$PATH:/root/bin
+
+WORKDIR /opt
+
+# ffmpeg -i Netflix_SquareAndTimelapse_1080P_30FPS.mkv -c:v h264_nvenc -preset default output.mp4
+#-it --runtime=nvidia -v /home/twick00/Documents/Public-DockerExternal:/opt
