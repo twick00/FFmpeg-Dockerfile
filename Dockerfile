@@ -13,6 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 ENV CUDA_VERSION 9.1.85
 
+ENV PATH=$PATH:/root/bin
+ENV PKG_CONFIG_PATH="/root/ffmpeg_build/lib/pkgconfig"
+ENV FFMPEG_BUILD="/root/ffmpeg_build"
+ENV BINDIR="/root/bin"
+
 ENV CUDA_PKG_VERSION 9-1=$CUDA_VERSION-1
 RUN apt-get update && apt-get install -y --no-install-recommends \
         cuda-cudart-$CUDA_PKG_VERSION && \
@@ -31,7 +36,7 @@ ENV LD_LIBRARY_PATH /usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
 # nvidia-container-runtime
 ENV NVIDIA_VISIBLE_DEVICES all
-ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
+ENV NVIDIA_DRIVER_CAPABILITIES video,compute,utility
 ENV NVIDIA_REQUIRE_CUDA "cuda>=9.1"
 ENV NCCL_VERSION 2.2.12
 
@@ -53,10 +58,11 @@ ENV LIBRARY_PATH /usr/local/cuda/lib64/stubs
 # Install dependent packages
 RUN apt-get -y update && apt-get install -y wget nano git-core build-essential pkg-config \
     autoconf automake cmake libass-dev libfreetype6-dev libtool libvorbis-dev pkg-config texinfo \
-    wget zlib1g-dev \
+    wget zlib1g-dev mercurial libnuma-dev \
 #   Install drivers for openCL
     ocl-icd-opencl-dev opencl-headers
 
+#   Intall headers for NVIDIA
 RUN git clone https://github.com/FFmpeg/nv-codec-headers /root/nv-codec-headers && \
   cd /root/nv-codec-headers &&\
   make -j8 && \
@@ -71,8 +77,7 @@ RUN cd /root/ffmpeg_sources && \
     wget https://www.nasm.us/pub/nasm/releasebuilds/2.13.03/nasm-2.13.03.tar.bz2 && \
     tar xjvf nasm-2.13.03.tar.bz2 && \
     cd nasm-2.13.03 && \
-    ./autogen.sh && \
-    PATH="/root/bin:$PATH" ./configure --prefix="/root/ffmpeg_build" --bindir="/root/bin" && \
+    ./autogen.sh && ./configure --prefix=$FFMPEG_BUILD --bindir=$BINDIR && \
     make -j6 && \
     make install
 
@@ -80,25 +85,24 @@ RUN cd /root/ffmpeg_sources && \
 RUN cd /root/ffmpeg_sources && \
     git -C x264 pull 2> /dev/null || git clone --depth 1 https://git.videolan.org/git/x264 && \
     cd x264 && \
-    PATH=/root/bin:$PATH PKG_CONFIG_PATH=/root/ffmpeg_build/lib/pkgconfig ./configure --prefix=/root/ffmpeg_build --bindir=/root/bin --enable-static --enable-pic && \
-    PATH=/root/bin:$PATH make -j6 && \
+    ./configure --prefix=$FFMPEG_BUILD --bindir=$BINDIR --enable-static --enable-pic && \
+    make -j6 && \
     make install
 
 ##Install drivers for H.265
-RUN apt-get -y install mercurial libnuma-dev && \
-    cd /root/ffmpeg_sources && \
-    if cd x265 2> /dev/null; then hg pull && hg update; else hg clone https://bitbucket.org/multicoreware/x265; fi && \
+RUN cd /root/ffmpeg_sources && \
+    hg clone https://bitbucket.org/multicoreware/x265 -r e41a9bf && \
     cd x265/build/linux && \
-    PATH=/root/bin:$PATH cmake -G 'Unix Makefiles' -DCMAKE_INSTALL_PREFIX=/root/ffmpeg_build -DENABLE_SHARED=off ../../source && \
-    PATH=/root/bin:$PATH make -j6 && \
+    cmake -G 'Unix Makefiles' -DCMAKE_INSTALL_PREFIX=$FFMPEG_BUILD -DENABLE_SHARED:bool=off ../../source && \
+    make -j6 && \
     make install
 
 #Install drivers for VPX/
 RUN cd ~/ffmpeg_sources && \
     git -C libvpx pull 2> /dev/null || git clone --depth 1 https://chromium.googlesource.com/webm/libvpx.git && \
     cd libvpx && \
-    PATH=/root/bin:$PATH ./configure --prefix=/root/ffmpeg_build --disable-examples --disable-unit-tests --enable-vp9-highbitdepth --as=nasm && \
-    PATH=/root/bin:$PATH make -j6 && \
+    ./configure --prefix=$FFMPEG_BUILD --disable-examples --disable-unit-tests --enable-vp9-highbitdepth --as=nasm && \
+    make -j6 && \
     make install
 
 #Install drivers for AOM
@@ -106,16 +110,15 @@ RUN cd ~/ffmpeg_sources && \
     git -C aom pull 2> /dev/null || git clone --depth 1 https://aomedia.googlesource.com/aom && \
     mkdir aom_build && \
     cd aom_build && \
-    PATH=/root/bin:$PATH cmake -G 'Unix Makefiles' -DCMAKE_INSTALL_PREFIX=/root/ffmpeg_build -DENABLE_SHARED=off -DENABLE_NASM=on ../aom && \
-    PATH=/root/bin:$PATH make -j6 && \
+    cmake -G 'Unix Makefiles' -DCMAKE_INSTALL_PREFIX=$FFMPEG_BUILD -DENABLE_SHARED=off -DENABLE_NASM=on ../aom && \
+    make -j6 && \
     make install
 
-ENV PATH=$PATH:/root/bin
+RUN git clone https://github.com/FFmpeg/FFmpeg /root/ffmpeg_sources/ffmpeg
 
-RUN git clone https://github.com/FFmpeg/FFmpeg /root/ffmpeg_sources/ffmpeg && \
-    cd /root/ffmpeg_sources/ffmpeg && \
-    PKG_CONFIG_PATH="/root/ffmpeg_build/lib/pkgconfig" ./configure \
-    --prefix="/root/ffmpeg_build" \
+RUN cd /root/ffmpeg_sources/ffmpeg && ./configure \
+    --prefix=$FFMPEG_BUILD \
+    --enable-version3 \
     --enable-nonfree --disable-shared \
     --enable-nvenc --enable-cuda \
     --enable-cuvid --enable-libnpp \
@@ -127,18 +130,15 @@ RUN git clone https://github.com/FFmpeg/FFmpeg /root/ffmpeg_sources/ffmpeg && \
     --enable-gpl \
     --pkg-config-flags=--static \
     --extra-cflags="-I/root/ffmpeg_build/include" \
-    --extra-cflags="-I/root/bin" \
+    --extra-cflags="-I$BINDIR" \
     --extra-ldflags="-L/root/ffmpeg_build/lib" \
     --extra-libs="-lpthread -lm" \
-    --bindir="/root/bin" && \
-    PATH="/root/bin:$PATH" make -j8 && \
+    --bindir=$BINDIR && \
+    make -j8 && \
     make install -j8 && \
     cd /root && rm -rf ffmpeg
-
-ENV NVIDIA_DRIVER_CAPABILITIES video,compute,utility
-ENV PATH=$PATH:/root/bin
 
 WORKDIR /opt
 
 # ffmpeg -i Netflix_SquareAndTimelapse_1080P_30FPS.mkv -c:v h264_nvenc -preset default output.mp4
-#-it --runtime=nvidia -v /home/twick00/Documents/Public-DockerExternal:/opt
+# -it --runtime=nvidia -v /Library/Sources/Public-DockerExternal:/opt
